@@ -79,10 +79,12 @@ impl<'a> VirtIOInput<'a> {
     }
 
     /// handle interrupt
-    pub fn pending(&mut self)->Result<InputRepr> {
+    pub fn pending(&mut self, f : impl Fn(&str))->Result<InputRepr> {
         assert!(self.header.ack_interrupt());
+        f(&"before pop");
         if let Ok((token, _)) = self.event_queue.pop_used() {
             let event = &mut self.event_buf[token as usize];
+            f(&"before from");
             let rt = match EventRepr::from(*event) {
                 EventRepr::ABSX(x) => {InputRepr::ABSX(x)}
                 EventRepr::ABSY(y) => {InputRepr::ABSY(y)}
@@ -92,6 +94,7 @@ impl<'a> VirtIOInput<'a> {
                 EventRepr::ScrollDown => {InputRepr::ScrollDown}
                 _ => InputRepr::None,
             };
+            f(&"before add");
             // requeue
             self.event_queue.add(&[], &[event.as_buf_mut()])?;
             Ok(rt)
