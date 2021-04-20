@@ -159,8 +159,8 @@ impl VirtQueue<'_> {
         }
     }
 
-    pub fn get_desc(&'static self, id : usize)->&'static Descriptor {
-        &self.desc[id]
+    pub fn get_desc(&self, id : usize)->Descriptor {
+        self.desc[id].clone()
     }
 
     /// Get a token from device used buffers, return (token, len).
@@ -220,6 +220,17 @@ pub struct Descriptor {
     /// flag
     pub flags: Volatile<DescFlags>,
     next: Volatile<u16>,
+}
+
+impl Clone for Descriptor {
+    fn clone(&self) -> Self {
+        Self {
+            addr : Volatile::<u64>::new(self.addr.read()),
+            len : Volatile::<u32>::new(self.len.read()),
+            flags : Volatile::<DescFlags>::new(self.flags.read()),
+            next : Volatile::<u16>::new(self.next.read()),
+        }
+    }
 }
 
 impl Descriptor {

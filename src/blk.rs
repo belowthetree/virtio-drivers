@@ -2,6 +2,7 @@ use super::*;
 use crate::header::VirtIOHeader;
 use crate::queue::VirtQueue;
 use bitflags::*;
+use spin::Mutex;
 use core::hint::spin_loop;
 use log::*;
 use volatile::Volatile;
@@ -18,6 +19,7 @@ pub struct VirtIOBlk<'a> {
     queue: VirtQueue<'a>,
     capacity: usize,
     request_pool : [BlkReq;QUEUE_SIZE],
+    mutex : spin::Mutex<bool>,
 }
 
 impl VirtIOBlk<'_> {
@@ -47,6 +49,7 @@ impl VirtIOBlk<'_> {
             queue,
             capacity: config.capacity.read() as usize,
             request_pool : [BlkReq{type_: ReqType::In, reserved: 0, sector: 0};QUEUE_SIZE],
+            mutex : Mutex::new(false),
         })
     }
 
@@ -60,6 +63,7 @@ impl VirtIOBlk<'_> {
         if !self.queue.can_pop() {
             return Err(Error::IoError);
         }
+        let _t = self.mutex.lock();
         let rt = self.queue.pop_used();
         match rt {
             _core::result::Result::Ok((idx, _len)) => {
@@ -82,15 +86,18 @@ impl VirtIOBlk<'_> {
     /// read block without blocking
     pub fn read_block_nb(&mut self, block_id: usize, buf: &mut [u8])->Result {
         assert_eq!(buf.len(), BLK_SIZE);
-        let idx = self.queue.get_desc_idx();
-        let req = BlkReq {
-            type_: ReqType::In,
-            reserved: 0,
-            sector: block_id as u64,
-        };
-        self.request_pool[idx] = req;
-        let mut resp = BlkResp::default();
-        self.queue.add(&[self.request_pool[idx].as_buf()], &[buf, resp.as_buf_mut()])?;
+        {
+            let _t = self.mutex.lock();
+            let idx = self.queue.get_desc_idx();
+            let req = BlkReq {
+                type_: ReqType::In,
+                reserved: 0,
+                sector: block_id as u64,
+            };
+            self.request_pool[idx] = req;
+            let mut resp = BlkResp::default();
+            self.queue.add(&[self.request_pool[idx].as_buf()], &[buf, resp.as_buf_mut()])?;
+        }
         self.header.notify(0);
         Ok(())
     }
@@ -98,15 +105,18 @@ impl VirtIOBlk<'_> {
     /// write block without blocking
     pub fn write_block_nb(&mut self, block_id: usize, buf: &[u8])->Result {
         assert_eq!(buf.len(), BLK_SIZE);
-        let idx = self.queue.get_desc_idx();
-        let req = BlkReq {
-            type_: ReqType::Out,
-            reserved: 0,
-            sector: block_id as u64,
-        };
-        self.request_pool[idx] = req;
-        let mut resp = BlkResp::default();
-        self.queue.add(&[self.request_pool[idx].as_buf(), buf], &[resp.as_buf_mut()])?;
+        {
+            let _t = self.mutex.lock();
+            let idx = self.queue.get_desc_idx();
+            let req = BlkReq {
+                type_: ReqType::Out,
+                reserved: 0,
+                sector: block_id as u64,
+            };
+            self.request_pool[idx] = req;
+            let mut resp = BlkResp::default();
+            self.queue.add(&[self.request_pool[idx].as_buf(), buf], &[resp.as_buf_mut()])?;
+        }
         self.header.notify(0);
         Ok(())
     }
@@ -120,7 +130,10 @@ impl VirtIOBlk<'_> {
             sector: block_id as u64,
         };
         let mut resp = BlkResp::default();
-        self.queue.add(&[req.as_buf()], &[buf, resp.as_buf_mut()])?;
+        {
+            let _t = self.mutex.lock();
+            self.queue.add(&[req.as_buf()], &[buf, resp.as_buf_mut()])?;
+        }
         self.header.notify(0);
         while !self.queue.can_pop() {
             spin_loop();
@@ -140,7 +153,10 @@ impl VirtIOBlk<'_> {
             sector: block_id as u64,
         };
         let mut resp = BlkResp::default();
-        self.queue.add(&[req.as_buf(), buf], &[resp.as_buf_mut()])?;
+        {
+            let _t = self.mutex.lock();
+            self.queue.add(&[req.as_buf(), buf], &[resp.as_buf_mut()])?;
+        }
         self.header.notify(0);
         while !self.queue.can_pop() {
             spin_loop();
